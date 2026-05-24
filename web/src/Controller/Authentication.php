@@ -38,6 +38,21 @@ class Authentication
     ): ResponseInterface {
         $template_vars = [];
 
+        // GET: try alternative auth methods (HTTP Basic, ...) before showing
+        // the form. Lets clients that follow a 302 redirect chain authenticate
+        // transparently with credentials already on the request.
+        if ($request->getMethod() === 'GET' && !$this->container->get('session')->has('username')) {
+            foreach ((array) $this->container->get('auth.methods') as $methodClass) {
+                if ($this->container->get($methodClass)->login($request)) {
+                    /** @var RouteParserInterface $routeParser */
+                    $routeParser = $this->container->get(RouteParserInterface::class);
+                    return $response
+                        ->withStatus(302)
+                        ->withHeader('Location', $routeParser->urlFor('calendar'));
+                }
+            }
+        }
+
         if ($request->getMethod() === 'POST') {
             $body = (array) ($request->getParsedBody() ?? []);
             $user = $body['user'] ?? null;
@@ -52,8 +67,14 @@ class Authentication
             } else {
                 $success = $this->processLogin($user, $password);
 
+                // Username is user-submitted; route it through Monolog's
+                // context (which serialises values via JSON) instead of the
+                // message body, so CR/LF in $user can't forge log lines.
+                // Truncate as defence-in-depth against unbounded inputs.
+                $logContext = ['user' => substr((string) $user, 0, 64), 'ip' => $clientIp];
+
                 if ($success === true) {
-                    $logger->info(sprintf('User %s logged in from %s', $user, $clientIp));
+                    $logger->info('User logged in', $logContext);
                     /** @var RouteParserInterface $routeParser */
                     $routeParser = $this->container->get(RouteParserInterface::class);
                     return $response
@@ -61,7 +82,7 @@ class Authentication
                         ->withHeader('Location', $routeParser->urlFor('calendar'));
                 }
 
-                $logger->info(sprintf('Failed login for %s from %s', $user, $clientIp));
+                $logger->info('Failed login', $logContext);
                 $template_vars['error'] = $translator->trans('messages.error_auth');
             }
         }
@@ -107,16 +128,30 @@ class Authentication
             return false;
         }
 
-        $session = $this->container->get('session');
-        $session->set('username', $user);
-        $session->set('password', $password);
-
+        // Resolve the principal BEFORE touching the session. A null
+        // principal_url (network race, malformed CalDAV response) or a
+        // throw from the principals repository must leave the session
+        // untouched — otherwise AuthMiddleware would let a partially
+        // authenticated user through with a null principal, widening
+        // ACL / share visibility.
         $principal_url = $caldav_client->getCurrentUserPrincipal();
-
+        if (empty($principal_url)) {
+            return false;
+        }
         $principal = $this->container->get('principals.repository')->get($principal_url);
+        $calendar_home_set = $caldav_client->getCalendarHomeSet($principal);
 
+        $session = $this->container->get('session');
+        // Defeat session fixation: regenerate the session id and destroy the
+        // old store before writing any authenticated state. Refresh the CSRF
+        // token afterwards so it is bound to the new session id.
+        $session->migrate(true);
+        $this->container->get('csrf.manager')->refreshToken($this->container->get('csrf.secret'));
+
+        $session->set('username', $user);
+        $session->set('password.encrypted', $this->container->get('password.cipher')->encrypt($password));
         $session->set('principal_url', $principal_url);
-        $session->set('calendar_home_set', $caldav_client->getCalendarHomeSet($principal));
+        $session->set('calendar_home_set', $calendar_home_set);
         $session->set('displayname', $principal->getDisplayName());
 
         return true;

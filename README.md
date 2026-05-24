@@ -16,7 +16,7 @@ users to manage their own calendars and shared ones.
 
 AgenDAV requires:
 
-- A CalDAV server like [Baïkal](http://baikal-server.com/),
+- A CalDAV server like [Baïkal](https://github.com/sabre-io/Baikal),
   [DAViCal](http://www.davical.org/),
   [Radicale](https://radicale.org/tutorial/), etc
 - A web server
@@ -24,9 +24,10 @@ AgenDAV requires:
 - PHP ctype extension
 - PHP mbstring extension
 - PHP cURL extension
-- A database supported by
-  [Doctrine DBAL](https://www.doctrine-project.org/projects/doctrine-dbal/en/2.12/reference/configuration.html#configuration)
-  like MySQL, PostgreSQL, SQLite
+- A database supported by Doctrine-DBAL like MySQL, PostgreSQL, SQLite
+- A CalDAV server like [Baïkal](http://baikal-server.com/),
+  [DAViCal](https://www.davical.org/),
+  or [Radicale](https://radicale.org/)
 - Optional: nodejs & npm to build assets (releases include a build)
 
 ## Documentation
@@ -39,7 +40,14 @@ See [installation guide](https://agendav.readthedocs.io/en/latest/admin/installa
 
 ### Docker Image
 
-Agendav offers no official Docker image. However, you may use unofficial docker images provided by the community instead, for example https://ghcr.io/nagimov/agendav-docker.
+Agendav offers no official Docker image.
+
+A `docker-compose.yml` is provided in this repository for local development.
+It brings up AgenDAV (PHP-Apache, on port 8080), MariaDB, and a Baikal CalDAV
+server (on port 8081). Run `docker compose up` from the repository root: a
+one-shot `web-builder` service runs `npm install`, `composer install`, and the
+asset build the first time (allow 1-2 minutes), then exits. Subsequent starts
+detect the existing build and skip it, so the stack comes up in a few seconds.
 
 ## Source
 

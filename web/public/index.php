@@ -2,6 +2,8 @@
 
 use AgenDAV\Middleware\AuthMiddleware;
 use AgenDAV\Middleware\CsrfMiddleware;
+use AgenDAV\Middleware\NoStoreMiddleware;
+use AgenDAV\Middleware\SecurityHeadersMiddleware;
 use AgenDAV\Middleware\TwigGlobalsMiddleware;
 use DI\Bridge\Slim\Bridge as SlimBridge;
 use DI\ContainerBuilder;
@@ -40,6 +42,16 @@ $builder->addDefinitions(__DIR__ . '/../app/services.php');
 $builder->addDefinitions(['environment' => $environment]);
 $container = $builder->build();
 
+// Required settings sanity check — fail loudly rather than mid-request.
+$csrfSecret = $container->has('csrf.secret') ? $container->get('csrf.secret') : null;
+if (!is_string($csrfSecret) || $csrfSecret === '') {
+    fwrite(STDERR, "Configuration error: 'csrf.secret' is not set in settings.php.\n");
+    fwrite(STDERR, "Generate a value with: php -r 'echo bin2hex(random_bytes(32));'\n");
+    http_response_code(500);
+    echo 'Configuration error. See server logs.';
+    exit(255);
+}
+
 // Build the Slim app via the PHP-DI bridge so controllers can be autowired
 $app = SlimBridge::create($container);
 
@@ -50,6 +62,8 @@ $container->set(RouteParserInterface::class, $app->getRouteCollector()->getRoute
 (require __DIR__ . '/../app/routes.php')($app);
 
 $app->add(new CsrfMiddleware($container));
+$app->add(new NoStoreMiddleware());
+$app->add(new SecurityHeadersMiddleware());
 
 // Routing + error handling come last so they run first
 $app->addRoutingMiddleware();
